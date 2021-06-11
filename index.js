@@ -20,9 +20,11 @@ module.exports = ({ app }) => {
     const config = await context.config('dco.yml', {
       require: {
         members: true
-      }
+      },
+      enable_pass: true
     })
     const requireForMembers = config.require.members
+    const enablePass = config.enable_pass
 
     const pr = context.payload.pull_request
 
@@ -95,75 +97,97 @@ module.exports = ({ app }) => {
           `\n\n${summary}`
       }
 
-      await context.octokit.checks
-        .create(
-          context.repo({
-            name: 'DCO',
-            head_branch: pr.head.ref,
-            head_sha: pr.head.sha,
-            status: 'completed',
-            started_at: timeStart,
-            conclusion: 'action_required',
-            completed_at: new Date(),
-            output: {
-              title: 'DCO',
-              summary
-            },
-            actions: [
-              {
-                label: 'Set DCO to pass',
-                description: 'would set status to passing',
-                identifier: 'override'
+      if (enablePass) {
+        await context.octokit.checks
+          .create(
+            context.repo({
+              name: 'DCO',
+              head_branch: pr.head.ref,
+              head_sha: pr.head.sha,
+              status: 'completed',
+              started_at: timeStart,
+              conclusion: 'action_required',
+              completed_at: new Date(),
+              output: {
+                title: 'DCO',
+                summary
+              },
+              actions: [
+                {
+                  label: 'Set DCO to pass',
+                  description: 'would set status to passing',
+                  identifier: 'override'
+                }
+              ]
+            })
+          )
+          .catch(function checkFails (error) {
+            if (error.status === 403) {
+              context.log.info(
+                'resource not accessible, creating status instead'
+              )
+              // create status
+              const description = dcoFailed[
+                dcoFailed.length - 1
+              ].message.substring(0, 140)
+              const params = {
+                sha: pr.head.sha,
+                context: 'DCO',
+                state: 'failure',
+                description,
+                target_url: 'https://github.com/probot/dco#how-it-works'
               }
-            ]
-          })
-        )
-        .catch(function checkFails (error) {
-          if (error.status === 403) {
-            context.log.info(
-              'resource not accessible, creating status instead'
-            )
-            // create status
-            const description = dcoFailed[
-              dcoFailed.length - 1
-            ].message.substring(0, 140)
-            const params = {
-              sha: pr.head.sha,
-              context: 'DCO',
-              state: 'failure',
-              description,
-              target_url: 'https://github.com/probot/dco#how-it-works'
+              return context.octokit.repos.createCommitStatus(
+                context.repo(params)
+              )
             }
-            return context.octokit.repos.createCommitStatus(
-              context.repo(params)
-            )
-          }
 
-          throw error
-        })
+            throw error
+          })
+      }
     }
   }
 
-  // This option is only presented to users with Write Access to the repo
+  // This option is only presented to users with Write Access to the repo and config.enable_pass set to true
   app.on('check_run.requested_action', setStatusPass)
   async function setStatusPass (context) {
     const timeStart = new Date()
+    const config = await context.config('dco.yml', {
+      require: {
+        members: true
+      },
+      enable_pass: true
+    })
+    const enablePass = config.enable_pass
 
-    await context.octokit.checks.create(
-      context.repo({
-        name: 'DCO',
-        head_branch: context.payload.check_run.check_suite.head_branch,
-        head_sha: context.payload.check_run.head_sha,
-        status: 'completed',
-        started_at: timeStart,
-        conclusion: 'success',
-        completed_at: new Date(),
-        output: {
-          title: 'DCO',
-          summary: 'Commit sign-off was manually approved.'
-        }
-      })
-    )
+    if (enablePass) {
+      await context.octokit.checks.create(
+        context.repo({
+          name: 'DCO',
+          head_branch: context.payload.check_run.check_suite.head_branch,
+          head_sha: context.payload.check_run.head_sha,
+          status: 'completed',
+          started_at: timeStart,
+          conclusion: 'success',
+          completed_at: new Date(),
+          output: {
+            title: 'DCO',
+            summary: 'Commit sign-off was manually approved.'
+          }
+        })
+      )
+    }
+    else {
+      await context.octokit.checks.create(
+        context.repo({
+          sha: context.payload.check_run.head_sha,
+          context: 'DCO',
+          state: 'failure',
+          description,
+          target_url: 'https://github.com/probot/dco#how-it-works'
+        })
+      )
+    }
   }
 }
 
